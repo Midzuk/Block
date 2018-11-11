@@ -6,11 +6,28 @@ module Inequality
    
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, tryTakeMVar, putMVar, takeMVar)
-import Control.Monad.Free (Free)
+import Control.Monad.Free (Free(..))
+import Control.Monad (join)
+import Control.Monad.Trans.Maybe (MaybeT(..))
         
 data Flow a = Flow a (MVar (Flow a))
 
 type Trigger a = Free MVar a
+
+newTrigger :: a -> IO (Trigger a)
+newTrigger x = Free <$> newMVar (Pure x)
+
+newEmptyTrigger :: IO (Trigger a)
+newEmptyTrigger = Free <$> newEmptyMVar
+
+pull :: Trigger a -> IO a
+pull (Pure x) = return x
+pull (Free m) = takeMVar m >>= pull
+
+tryPull :: Trigger a -> IO (Maybe a)
+tryPull (Pure x) = return $ Just x
+tryPull (Free m) = runMaybeT $ MaybeT (tryTakeMVar m) >>= (MaybeT . tryPull)
+--tryPull (Free m) = tryTakeMVar m >>= ((join <$>) . sequence . (tryPull <$>))
 
 fromList :: [a] -> IO (MVar (Flow a))
 fromList [] = newEmptyMVar
@@ -40,14 +57,14 @@ path () m = do
   s <- takeMVar m0
   putMVar m s
 
-
+{-
 -- act: 資源を1消費
 act :: Act -> MVar (Flow Event) -> IO ()
 act True m = undefined
 act False m = do
   Flow _ m0 <- takeMVar m
   putMVar m m0
-
+-}
 
 inequality :: MVar (Flow Event) -> IO (Maybe Event)
 inequality m_ = do
