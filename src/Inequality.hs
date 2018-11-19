@@ -1,4 +1,6 @@
 --{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE LambdaCase #-}
+
 
 module Inequality
   ( 
@@ -7,19 +9,67 @@ module Inequality
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, tryTakeMVar, putMVar, takeMVar)
 import Control.Monad.Free (Free(..))
-import Control.Monad (join)
+import Control.Comonad.Cofree (Cofree(..))
+import Control.Comonad.Trans.Cofree (CofreeT(..))
+import Control.Monad 
 import Control.Monad.Trans.Maybe (MaybeT(..))
+import Control.Applicative
+import Data.Function (on)
         
-data Flow a = Flow a (MVar (Flow a))
+--data Flow a = Flow a (MVar (Flow a))
 
-type Trigger a = Free MVar a
+--type Trigger a = Free MVar a
+--data Flow a = Flow a (MVar (Flow a))
+--type FreeFlow a = Free Flow a
 
+-- type Flow a = [MVar (Trigger a)]
+-- type Trigger a = Free Flow a
+
+-- data Flow a = Flow (Free Flow a) (MVar (Flow a))
+
+{-
 newTrigger :: a -> IO (Trigger a)
 newTrigger x = Free <$> newMVar (Pure x)
 
 newEmptyTrigger :: IO (Trigger a)
 newEmptyTrigger = Free <$> newEmptyMVar
+-}
 
+newtype Object a = Object { runObject :: IO (MVar a) }
+
+--consume :: Object a -> IO a
+--consume x = runObject x >>= takeMVar
+
+instance Functor Object where
+  fmap f x = Object $ (f <$> (runObject >=> takeMVar) x) >>= newMVar
+
+instance Applicative Object where
+  pure = Object . newMVar
+  f <*> x = Object $ ((runObject >=> takeMVar) f <*> (runObject >=> takeMVar) x) >>= newMVar
+
+instance Monad Object where
+  x >>= f = Object $ ((runObject >=> takeMVar) x >>= ((runObject >=> takeMVar) . f)) >>= newMVar
+
+instance Alternative Object where
+  empty = Object newEmptyMVar
+  l <|> r = Object $ ((<|>) `on` (runObject >=> takeMVar)) l r >>= newMVar
+
+  {-do
+    l <- (runObject >=> tryTakeMVar) l_
+    r <- (runObject >=> tryTakeMVar) r_
+    case l <|> r of
+-}
+
+
+type Flow a = Cofree Object a
+type Trigger a = Free Object a
+
+--data Path a = Flow (Cofree Object (Path a)) | Trigger (Free Object (Path a))
+
+--newtype Path a = Path (CofreeT (Free Object) a)
+
+
+{-
 pull :: Trigger a -> IO a
 pull (Pure x) = return x
 pull (Free m) = takeMVar m >>= pull
@@ -29,6 +79,35 @@ tryPull (Pure x) = return $ Just x
 tryPull (Free m) = runMaybeT $ MaybeT (tryTakeMVar m) >>= (MaybeT . tryPull)
 --tryPull (Free m) = tryTakeMVar m >>= ((join <$>) . sequence . (tryPull <$>))
 
+peel :: Trigger a -> IO (Trigger a)
+peel (Free m) = takeMVar m
+
+tryPeel :: Trigger a -> IO (Maybe (Trigger a))
+tryPeel (Free m) = tryTakeMVar m
+
+
+
+makeTriggerList :: [a] -> IO [Trigger a]
+makeTriggerList = traverse newTrigger
+
+type Act = Bool
+
+inequality :: [Trigger Act] -> IO (Maybe Act)
+inequality ts = do
+  mo <- newEmptyMVar
+  mmo <- newMVar (Free mo)
+
+  --forkIO $ putMVar (head ts) (Free mmo)
+
+
+
+  t <- takeMVar mmo
+  tryPull t
+
+
+-}
+
+{-
 fromList :: [a] -> IO (MVar (Flow a))
 fromList [] = newEmptyMVar
 fromList (x:xs) = Flow x <$> fromList xs >>= newMVar
@@ -57,6 +136,8 @@ path () m = do
   s <- takeMVar m0
   putMVar m s
 
+-}
+
 {-
 -- act: 資源を1消費
 act :: Act -> MVar (Flow Event) -> IO ()
@@ -66,6 +147,7 @@ act False m = do
   putMVar m m0
 -}
 
+{-
 inequality :: MVar (Flow Event) -> IO (Maybe Event)
 inequality m_ = do
   s_ <- tryTakeMVar m_
@@ -88,6 +170,7 @@ m1 ~> m2 = do
   putMVar m2 x
 infix 4 ~>
 
+-}
 {-
 --大小関係
 type Path = Bool
